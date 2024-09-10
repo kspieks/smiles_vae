@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 
 class VAE(nn.Module):
     def __init__(self,
@@ -14,6 +16,11 @@ class VAE(nn.Module):
         self.bos = voc.vocab['<BOS>']
         self.eos = voc.vocab['<EOS>']
         self.pad = voc.vocab['<PAD>']
+
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.latent_dim = latent_dim
 
         # embed the tokens and define padding index
         self.x_emb = nn.Embedding(num_embeddings=voc.vocab_size,
@@ -93,6 +100,12 @@ class VAE(nn.Module):
             x: input sequence with shape (batch_size, max_seq_len)
             z: latent vector with shape (batch_size, latent_dim)
         """
+        batch_size, seq_len = x.size()
+
+        # add BOS token and remove the las PAD token to keep the length constant
+        start_token = torch.full((batch_size, 1), self.bos, dtype=torch.long)
+        x = torch.cat((start_token, x[:, :-1]), 1)
+
         x_emb = self.x_emb(x)
 
         # repeat z to match max_seq_len
@@ -124,3 +137,56 @@ class VAE(nn.Module):
         recon_x = self.decode(x, z)  # (batch_size, max_seq_len, vocab_size)
 
         return recon_x, mu, logvar
+
+    def sample_z_prior(self, n_batch):
+        """
+        Sample z ~ p(z) = N(0, I)
+        
+        Args:
+            n_batch: int specifying the batch size.
+        
+        Returns:
+            z: latent vector with shape (n_batch, latent_dim)
+        """
+        return torch.randn(n_batch, self.latent_dim, device=self.device)
+    
+    def sample(self, n_batch=32, max_len=100, z=None, temp=1.0):
+        """
+        Generate n_batch samples.
+        """
+        self.eval()
+        with torch.no_grad():
+            if z is None:
+                z = self.sample_z_prior(n_batch)
+            z = z.to(self.device)   # ensure that z is on the same device as the model
+            z_0 = z.unsqueeze(1)
+
+            # get initial hidden state
+            h = self.latent2hidden(z)   # (batch_size, hidden_dim)
+
+            # repeat initial hidden state along the number of GRU layers
+            h = h.unsqueeze(0).repeat(self.decoder_rnn.num_layers, 1, 1)    # (num_gru_layers, batch_size, hidden_dim)
+
+            # define first token
+            w = torch.tensor(self.bos, device=self.device).repeat(n_batch)
+
+            # initialize tensor to store generated sequences
+            x_gen = torch.tensor([self.pad], device=self.device).repeat(n_batch, max_len)
+            x_gen[:, 0] = self.bos
+
+            # iteratively generate sequences
+            for t in range(1, max_len):
+                # embed the current token and concatenate it to the latent vector
+                x_emb = self.x_emb(w).unsqueeze(1)
+                x_input = torch.cat([x_emb, z_0], dim=-1)
+
+                # get the output, apply temperature scaling to the logits, and get probabilities
+                output, h = self.decoder_rnn(x_input, h)
+                logits = self.hidden2vocab(output.squeeze(1))
+                probs = F.softmax(logits / temp, dim=-1)
+
+                # sample the next token
+                w = torch.multinomial(probs, num_samples=1).squeeze(1)
+                x_gen[:, t] = w
+
+        return x_gen
