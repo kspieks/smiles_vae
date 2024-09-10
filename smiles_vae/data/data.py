@@ -21,7 +21,7 @@ class SMILESDataset(Dataset):
     
     def __getitem__(self, i):
         smi = self.smiles[i]
-        tokenized_smi = self.voc.tokenize(smi, add_bos=True, add_eos=True, add_pad=False)
+        tokenized_smi = self.voc.tokenize(smi, add_bos=False, add_eos=True, add_pad=False)
         encoded_smi = self.voc.encode(tokenized_smi)
         return torch.tensor(encoded_smi, dtype=torch.long)
     
