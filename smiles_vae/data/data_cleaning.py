@@ -1,6 +1,6 @@
 """Functions to clean and filter SMILES during data preprocessing."""
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from rdkit.Chem import Descriptors
 from rdkit.Chem.MolStandardize import rdMolStandardize
 
@@ -86,6 +86,11 @@ def clean_smiles(df,
         - SMILES are canonicalized
         - calculate InChI keys and remove duplcate entries
     """
+
+    # suppress unnecessary print statements
+    lg = RDLogger.logger()
+    lg.setLevel(RDLogger.ERROR)
+
     print('Cleaning dataset...')
     print(f'Dataframe has {len(df)} rows')
 
